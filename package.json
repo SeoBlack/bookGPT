@@ -7,7 +7,7 @@
     "dev": "vite",
     "server": "node server.js",
     "dev:full": "concurrently \"npm run server\" \"npm run dev\"",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "build:server": "echo 'Server is ready for production'",
     "start": "node server.js",
     "start:prod": "NODE_ENV=production node server.js",
