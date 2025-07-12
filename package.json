@@ -11,7 +11,6 @@
     "build:server": "echo 'Server is ready for production'",
     "start": "node server.js",
     "start:prod": "NODE_ENV=production node server.js",
-    "vercel-build": "node build-vercel.js",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "echo 'No tests specified'",
