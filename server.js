@@ -10,6 +10,9 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
+import helmet from "helmet";
+import compression from "compression";
+import rateLimit from "express-rate-limit";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,29 +20,97 @@ const __dirname = path.dirname(__filename);
 // Load environment variables first
 dotenv.config();
 
-const app = express();
+// Environment configuration
+const isProduction = process.env.NODE_ENV === "production";
 const PORT = process.env.PORT || 3001;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Validate required environment variables
+const requiredEnvVars = ["OPENAI_API_KEY", "PINECONE_API_KEY"];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
 
-// Configure multer for file uploads
+const app = express();
+
+// Security middleware
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:"],
+      },
+    },
+  })
+);
+
+// Compression middleware
+app.use(compression());
+
+// CORS configuration
+const corsOptions = {
+  origin: isProduction
+    ? [process.env.FRONTEND_URL || "http://localhost:3000"]
+    : true,
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: isProduction ? 100 : 1000, // limit each IP to 100 requests per windowMs in production
+  message: "Too many requests from this IP, please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/", limiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Static file serving for production
+if (isProduction) {
+  app.use(express.static(path.join(__dirname, "dist")));
+}
+
+// Ensure required directories exist
+const requiredDirs = ["uploads", "temp_images"];
+for (const dir of requiredDirs) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+// Configure multer for file uploads with better error handling
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = "uploads";
     if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir);
+      fs.mkdirSync(uploadDir, { recursive: true });
     }
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
+    // Sanitize filename
+    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+    cb(null, Date.now() + "-" + sanitizedName);
   },
 });
 
 const upload = multer({
   storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+    files: 1,
+  },
   fileFilter: (req, file, cb) => {
     console.log("File filter check:", file.originalname, file.mimetype);
     if (file.mimetype === "application/pdf") {
@@ -261,16 +332,47 @@ async function generateEmbeddings(text) {
   }
 }
 
+// Production logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const logMessage = `${new Date().toISOString()} - ${req.method} ${
+      req.path
+    } - ${res.statusCode} - ${duration}ms`;
+    console.log(logMessage);
+  });
+  next();
+});
+
 // Error handling middleware for multer
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
-    console.log("Multer error:", error);
+    console.error("Multer error:", error);
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res
+        .status(400)
+        .json({ error: "File too large. Maximum size is 50MB." });
+    }
     return res.status(400).json({ error: `Upload error: ${error.message}` });
   } else if (error) {
-    console.log("Other error:", error);
+    console.error("Other error:", error);
     return res.status(400).json({ error: error.message });
   }
   next();
+});
+
+// Global error handling middleware
+app.use((error, req, res, next) => {
+  console.error("Unhandled error:", error);
+  res.status(500).json({
+    error: isProduction ? "Internal server error" : error.message,
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
 });
 
 // Upload and process PDF
@@ -357,11 +459,9 @@ app.post("/api/upload", upload.single("pdf"), async (req, res) => {
         `;
         console.log("Using fallback OKR content");
       } else {
-        return res
-          .status(400)
-          .json({
-            error: "No meaningful text could be extracted from the PDF",
-          });
+        return res.status(400).json({
+          error: "No meaningful text could be extracted from the PDF",
+        });
       }
     }
 
@@ -501,6 +601,37 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
+// Serve React app for production
+if (isProduction) {
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  });
+}
+
+// Graceful shutdown handling
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down gracefully");
+  process.exit(0);
+});
+
+process.on("SIGINT", () => {
+  console.log("SIGINT received, shutting down gracefully");
+  process.exit(0);
+});
+
+// Unhandled promise rejection handler
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+// Uncaught exception handler
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+  process.exit(1);
+});
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 BookGPT server running on port ${PORT}`);
+  console.log(`📚 Environment: ${isProduction ? "Production" : "Development"}`);
+  console.log(`🔒 Security: ${isProduction ? "Enabled" : "Development mode"}`);
 });
