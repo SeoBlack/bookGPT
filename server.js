@@ -81,6 +81,15 @@ if (isProduction) {
   app.use(express.static(path.join(__dirname, "dist")));
 }
 
+// Serve the React app for all non-API routes
+app.get("/", (req, res) => {
+  if (isProduction) {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  } else {
+    res.json({ message: "BookGPT API Server - Use /api endpoints" });
+  }
+});
+
 // Ensure required directories exist
 const requiredDirs = ["uploads", "temp_images"];
 for (const dir of requiredDirs) {
@@ -108,7 +117,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fileSize: 4 * 1024 * 1024, // 4MB limit for Vercel
     files: 1,
   },
   fileFilter: (req, file, cb) => {
@@ -352,7 +361,9 @@ app.use((error, req, res, next) => {
     if (error.code === "LIMIT_FILE_SIZE") {
       return res
         .status(400)
-        .json({ error: "File too large. Maximum size is 50MB." });
+        .json({
+          error: "File too large. Maximum size is 4MB for Vercel deployment.",
+        });
     }
     return res.status(400).json({ error: `Upload error: ${error.message}` });
   } else if (error) {
@@ -623,12 +634,14 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-// Serve React app for production (must be last route)
-if (isProduction) {
-  app.get("/*", (req, res) => {
+// Catch-all route for SPA (must be last route)
+app.get("*", (req, res) => {
+  if (isProduction) {
     res.sendFile(path.join(__dirname, "dist", "index.html"));
-  });
-}
+  } else {
+    res.status(404).json({ error: "Not found" });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 BookGPT server running on port ${PORT}`);
