@@ -7,9 +7,9 @@ import path from "path";
 console.log("🚀 Starting Vercel build for BookGPT...");
 
 try {
-  // Install dependencies
+  // Install all dependencies (including dev dependencies for build tools)
   console.log("📦 Installing dependencies...");
-  execSync("npm ci --only=production", { stdio: "inherit" });
+  execSync("npm ci", { stdio: "inherit" });
 
   // Build the frontend
   console.log("🔨 Building frontend...");
