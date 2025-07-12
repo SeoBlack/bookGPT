@@ -70,7 +70,7 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use("/api/", limiter);
+app.use("/api", limiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
@@ -601,13 +601,6 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
-// Serve React app for production
-if (isProduction) {
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
-  });
-}
-
 // Graceful shutdown handling
 process.on("SIGTERM", () => {
   console.log("SIGTERM received, shutting down gracefully");
@@ -629,6 +622,13 @@ process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception:", error);
   process.exit(1);
 });
+
+// Serve React app for production (must be last route)
+if (isProduction) {
+  app.get("/*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`🚀 BookGPT server running on port ${PORT}`);
