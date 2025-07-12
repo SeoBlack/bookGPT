@@ -21,6 +21,19 @@ try {
     process.exit(1);
   }
 
+  // Copy the built index.html to the root for Vercel
+  console.log("📄 Copying built index.html to root...");
+  const distIndexPath = path.join("dist", "index.html");
+  const rootIndexPath = "index.html";
+
+  if (fs.existsSync(distIndexPath)) {
+    fs.copyFileSync(distIndexPath, rootIndexPath);
+    console.log("✅ index.html copied successfully");
+  } else {
+    console.error("❌ Built index.html not found in dist directory");
+    process.exit(1);
+  }
+
   // Create necessary directories for Vercel
   console.log("📁 Creating necessary directories...");
   const dirs = ["uploads", "temp_images"];
